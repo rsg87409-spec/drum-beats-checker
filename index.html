@@ -90,6 +90,19 @@
   .legend .swlabels{display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--faint)}
   .legend .swlabels span:nth-child(2){color:var(--dim)}
   .legend p{margin:10px 0 0;font-size:12.5px;line-height:1.75;color:var(--dim)}
+  .laneInner{position:relative}
+  .playhead{position:absolute;top:0;width:2px;background:var(--ok);pointer-events:none;
+    box-shadow:0 0 7px rgba(127,199,154,.85)}
+  .playbar{display:flex;align-items:center;gap:12px;margin-top:10px}
+  .playbar button{
+    background:var(--panel);border:1px solid var(--line);color:var(--text);font:inherit;
+    font-size:15px;line-height:1;padding:10px 16px;border-radius:4px;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .playbar button:disabled{opacity:.35;cursor:default}
+  .playbar #playTime{font-family:var(--num);font-size:12.5px;color:var(--dim);flex:1}
+  .playbar .follow{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--dim);cursor:pointer}
+  .playbar .follow input{accent-color:var(--early);width:16px;height:16px}
   .pager{display:flex;align-items:center;gap:12px;margin-bottom:10px}
   .pager button{
     background:var(--panel);border:1px solid var(--line);color:var(--text);font:inherit;
@@ -212,7 +225,17 @@
     </div>
     <div class="laneWrap">
       <div class="laneKeys" id="laneKeys"></div>
-      <div class="scroller" id="laneScroll"><canvas id="laneCv"></canvas></div>
+      <div class="scroller" id="laneScroll">
+        <div class="laneInner" id="laneInner">
+          <canvas id="laneCv"></canvas>
+          <div class="playhead hidden" id="playhead"></div>
+        </div>
+      </div>
+    </div>
+    <div class="playbar">
+      <button id="playBtn" aria-label="再生">▶</button>
+      <span id="playTime">0:00 / 0:00</span>
+      <label class="follow"><input type="checkbox" id="followChk" checked> 再生に追従</label>
     </div>
     <div class="ctl" style="margin-top:14px">
       <label for="mag">ズレの拡大 <b id="magV">1 ms = 1.0 px</b></label>
@@ -225,7 +248,7 @@
     <div class="legend">
       <div class="swrow" id="legendRow"></div>
       <div class="swlabels"><span>走り（早い）</span><span>ジャスト</span><span>もたり（遅い）</span></div>
-      <p>丸の色はグリッドからのズレです。白に近いほど正確、青くなるほど早く、橙色になるほど遅く叩いています。連結線が赤いのは、同時に叩いた音が 12ms 以上ばらけたところです。</p>
+      <p>下の再生ボタンを押すと、緑の線が今鳴っている位置を指します。ページも自動でめくれます。<br><br>丸の色はグリッドからのズレです。白に近いほど正確、青くなるほど早く、橙色になるほど遅く叩いています。連結線が赤いのは、同時に叩いた音が 12ms 以上ばらけたところです。</p>
     </div>
     <p class="cap"><b style="color:var(--text)">横が等間隔か</b> — 縦線がグリッドです。丸が線の上に乗っていれば正確、右にずれていれば もたり、左なら 走り。灰色の帯が ±15ms の範囲です。<br><br>
     <b style="color:var(--text)">縦が揃っているか</b> — 同時に叩いた音は連結線で結んであります。<b style="color:var(--text)">線がまっすぐ立っていれば揃っている</b>、傾いていればその分ズレています。<br><br>
@@ -280,7 +303,7 @@
 
   <section>
     <h2>録音の確認</h2>
-    <audio id="player" controls preload="none"></audio>
+    <audio id="player" controls preload="metadata"></audio>
     <div style="margin-top:12px;display:flex;gap:10px">
       <button class="mini" id="dlBtn">WAV を保存</button>
     </div>
@@ -669,6 +692,7 @@ let chunks = [], total = 0, recording = false, startedAt = 0, tick = null;
 let recorded = null;      // { pcm, sr }
 let fluxCache = null;     // { flux, nFrames, hopTime }
 let lastAnalysis = null;
+let laneView = null;
 let wavURL = null;
 
 function fmtClock(sec){
@@ -1155,8 +1179,8 @@ function renderLanes(){
   if (grid){
     const perBar = (grid.sub || 1)*4;
     const b0 = Math.floor((kStart - kBase)/perBar) + 1;
-    const b1 = Math.floor((kEnd - kBase)/perBar) + 1;
     const bTotal = Math.floor((kMax - kBase)/perBar) + 1;
+    const b1 = Math.min(Math.floor((kEnd - kBase)/perBar) + 1, bTotal);
     els("pageLabel").textContent = b0 + "–" + b1 + " 小節 / 全 " + bTotal + " 小節";
   } else {
     els("pageLabel").textContent = kStart.toFixed(0) + "–" + Math.min(dur, kEnd).toFixed(0) + " 秒 / 全 " + dur.toFixed(0) + " 秒";
@@ -1165,7 +1189,24 @@ function renderLanes(){
   const span = grid ? (kEnd - kStart + 1)*stepPx : (Math.min(dur, kEnd) - kStart)*(stepPx/0.5);
   const wNeeded = Math.min(MAX_W, padL + span + padR);
   const w = Math.max(els("laneScroll").clientWidth || 400, wNeeded);
+
+  // how a moment in the recording maps onto this page, for the playhead
+  const stepsPage = grid ? (kEnd - kStart + 1) : 0;
+  const secsPage = grid ? 0 : inner/(stepPx/0.5);
+  const kB = kBase, kS = kStart, nPages = pages;
+  laneView = {
+    pages: nPages,
+    height: padT + LANES.length*laneH,
+    xOf: t => grid ? padL + ((t - grid.phase)/grid.period - kS)*stepPx
+                   : padL + (t - kS)*(stepPx/0.5),
+    pageOf: t => {
+      const p = grid ? Math.floor(((t - grid.phase)/grid.period - kB)/stepsPage)
+                     : Math.floor(t/secsPage);
+      return Math.max(0, Math.min(nPages - 1, p));
+    }
+  };
   const c = setupCanvas(els("laneCv"), w, h);
+  els("laneInner").style.width = w + "px";
   c.fillStyle = CSSVAR("--panel"); c.fillRect(0, 0, w, h);
 
   /* ---- grid columns ---- */
@@ -1389,7 +1430,55 @@ function turnPage(delta){
   renderLanes();
   const sc = els("laneScroll");
   sc.scrollLeft = delta > 0 ? 0 : sc.scrollWidth;
+  if (player.paused) playhead.classList.add("hidden");
 }
+/* ------------------------------------------------------------
+   Follow the recording while it plays
+   ------------------------------------------------------------ */
+const player = els("player"), playBtn = els("playBtn"),
+      playTime = els("playTime"), playhead = els("playhead");
+let followRaf = null;
+
+const mmss = t => Math.floor(t/60) + ":" + String(Math.floor(t%60)).padStart(2, "0");
+const showTime = () =>
+  playTime.textContent = mmss(player.currentTime || 0) + " / " + mmss(player.duration || 0);
+
+function movePlayhead(t){
+  if (!laneView || !lastAnalysis) return;
+  const follow = els("followChk").checked;
+  if (follow){
+    const p = laneView.pageOf(t);
+    if (p !== settings.page){ settings.page = p; renderLanes(); }
+  }
+  const x = laneView.xOf(t);
+  playhead.style.height = laneView.height + "px";
+  playhead.style.transform = "translateX(" + x + "px)";
+  playhead.classList.remove("hidden");
+  if (follow){
+    const sc = els("laneScroll"), vis = sc.clientWidth;
+    if (x < sc.scrollLeft + 50 || x > sc.scrollLeft + vis - 50){
+      sc.scrollLeft = Math.max(0, x - vis*0.35);
+    }
+  }
+}
+
+function followTick(){
+  if (player.paused || player.ended){ followRaf = null; return; }
+  movePlayhead(player.currentTime);
+  showTime();
+  followRaf = requestAnimationFrame(followTick);
+}
+
+playBtn.addEventListener("click", () => { player.paused ? player.play() : player.pause(); });
+player.addEventListener("play", () => {
+  playBtn.textContent = "⏸";
+  if (!followRaf) followRaf = requestAnimationFrame(followTick);
+});
+player.addEventListener("pause", () => { playBtn.textContent = "▶"; });
+player.addEventListener("ended", () => { playBtn.textContent = "▶"; playhead.classList.add("hidden"); });
+player.addEventListener("seeked", () => { movePlayhead(player.currentTime); showTime(); });
+player.addEventListener("loadedmetadata", () => { showTime(); playhead.classList.add("hidden"); });
+
 els("pagePrev").addEventListener("click", () => turnPage(-1));
 els("pageNext").addEventListener("click", () => turnPage(1));
 
