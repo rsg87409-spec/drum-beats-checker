@@ -84,6 +84,14 @@
   .row span:last-child{font-family:var(--num);font-variant-numeric:tabular-nums}
 
   /* ---- canvases ---- */
+  .pager{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .pager button{
+    background:var(--panel);border:1px solid var(--line);color:var(--text);font:inherit;
+    font-size:14px;line-height:1;padding:9px 15px;border-radius:4px;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .pager button:disabled{opacity:.3;cursor:default}
+  .pager span{font-family:var(--num);font-size:12.5px;color:var(--dim);flex:1;text-align:center}
   .laneWrap{display:flex;border:1px solid var(--line-soft);background:var(--panel)}
   .laneKeys{flex:0 0 78px;border-right:1px solid var(--line);background:var(--raised)}
   .laneKeys div{display:flex;flex-direction:column;justify-content:center;padding-left:10px;box-sizing:border-box}
@@ -215,6 +223,11 @@
 
   <section>
     <h2>打点と グリッド</h2>
+    <div class="pager hidden" id="lanePager">
+      <button id="pagePrev" aria-label="前のページ">◀</button>
+      <span id="pageLabel"></span>
+      <button id="pageNext" aria-label="次のページ">▶</button>
+    </div>
     <div class="laneWrap">
       <div class="laneKeys" id="laneKeys"></div>
       <div class="scroller" id="laneScroll"><canvas id="laneCv"></canvas></div>
@@ -907,7 +920,7 @@ els("dlBtn").addEventListener("click", () => {
 /* ============================================================
    Analysis pipeline (cheap to re-run — flux is cached)
    ============================================================ */
-let settings = { sens:7, gap:0.045, gate:0.12, mag:1.0, mode:"auto", bpm:100, sub:2, zoom:84 };
+let settings = { sens:7, gap:0.045, gate:0.12, mag:1.0, page:0, mode:"auto", bpm:100, sub:2, zoom:84 };
 
 function reanalyse(){
   if (!fluxCache || !recorded) return;
@@ -949,6 +962,7 @@ function reanalyse(){
   }
 
   const clusters = clusterAcrossBands(byBand, settings.gap);
+  settings.page = 0;
   lastAnalysis = { byBand, grid, clusters, dur };
   renderAll();
 }
@@ -981,7 +995,8 @@ function devColor(ms){
 }
 
 function setupCanvas(cv, w, h){
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let dpr = Math.min(window.devicePixelRatio || 1, 2);
+  while (dpr > 1 && (w*dpr > 8000 || w*dpr*h*dpr > 12e6)) dpr -= 0.25;
   cv.width = Math.round(w*dpr);
   cv.height = Math.round(h*dpr);
   cv.style.width = w + "px";
@@ -1086,30 +1101,67 @@ function renderLanes(){
   const top = padT, bot = padT + LANES.length*laneH;
 
   /* ---- collect the hits, positioned by grid column + magnified error ---- */
-  let dots = [], kMin = 0, kMax = 0, colX;
+  // Safari refuses to paint a canvas past a few thousand pixels, so long takes
+  // are shown a page at a time rather than as one very wide strip.
+  const MAX_W = 3200;
+  const inner = MAX_W - padL - padR;
+  let dots = [], kMin = 0, kMax = 0, colX, pages = 1, kStart = 0, kEnd = 0;
 
   if (grid){
     const P = grid.period, ph = grid.phase;
     const stepOf = t => Math.round((t - ph)/P);
+    const perBar = (grid.sub || 1)*4;
+    const all = [];
     const ks = [];
     LANES.forEach((L, i) => (byBand[L.key] || []).forEach(o => {
       const k = stepOf(o.t);
       ks.push(k);
-      dots.push({ lane:i, k, dev:(o.t - (ph + k*P))*1000, s:o.strength, t:o.t });
+      all.push({ lane:i, k, dev:(o.t - (ph + k*P))*1000, s:o.strength, t:o.t });
     }));
     if (!ks.length) ks.push(0);
     kMin = Math.min(...ks); kMax = Math.max(...ks);
-    colX = k => padL + (k - kMin)*stepPx;
+
+    // page in whole bars so the columns always start at a downbeat
+    const barsFit = Math.max(1, Math.floor(inner/stepPx/perBar));
+    const stepsPerPage = barsFit*perBar;
+    pages = Math.max(1, Math.ceil((kMax - kMin + 1)/stepsPerPage));
+    settings.page = Math.max(0, Math.min(pages - 1, settings.page|0));
+    kStart = kMin + settings.page*stepsPerPage;
+    kEnd = Math.min(kMax, kStart + stepsPerPage - 1);
+
+    colX = k => padL + (k - kStart)*stepPx;
+    dots = all.filter(d => d.k >= kStart && d.k <= kEnd);
     dots.forEach(d => { d.x = colX(d.k) + d.dev*pxMs; d.y = cy(d.lane); });
   } else {
-    // no usable grid: fall back to a plain time axis
     const pps = stepPx/0.5;
+    const secsPerPage = inner/pps;
+    pages = Math.max(1, Math.ceil(dur/secsPerPage));
+    settings.page = Math.max(0, Math.min(pages - 1, settings.page|0));
+    const t0 = settings.page*secsPerPage, t1 = t0 + secsPerPage;
+    kStart = t0; kEnd = t1;
     LANES.forEach((L, i) => (byBand[L.key] || []).forEach(o => {
-      dots.push({ lane:i, k:null, dev:0, s:o.strength, t:o.t, x:padL + o.t*pps, y:cy(i) });
+      if (o.t < t0 || o.t > t1) return;
+      dots.push({ lane:i, k:null, dev:0, s:o.strength, t:o.t, x:padL + (o.t - t0)*pps, y:cy(i) });
     }));
   }
 
-  const wNeeded = grid ? padL + (kMax - kMin + 1)*stepPx + padR : padL + dur*(stepPx/0.5) + padR;
+  /* ---- pager ---- */
+  const pager = els("lanePager");
+  pager.classList.toggle("hidden", pages < 2);
+  els("pagePrev").disabled = settings.page <= 0;
+  els("pageNext").disabled = settings.page >= pages - 1;
+  if (grid){
+    const perBar = (grid.sub || 1)*4;
+    const b0 = Math.floor((kStart - kMin)/perBar) + 1;
+    const b1 = Math.floor((kEnd - kMin)/perBar) + 1;
+    const bTotal = Math.floor((kMax - kMin)/perBar) + 1;
+    els("pageLabel").textContent = b0 + "–" + b1 + " 小節 / 全 " + bTotal + " 小節";
+  } else {
+    els("pageLabel").textContent = kStart.toFixed(0) + "–" + Math.min(dur, kEnd).toFixed(0) + " 秒 / 全 " + dur.toFixed(0) + " 秒";
+  }
+
+  const span = grid ? (kEnd - kStart + 1)*stepPx : (Math.min(dur, kEnd) - kStart)*(stepPx/0.5);
+  const wNeeded = Math.min(MAX_W, padL + span + padR);
   const w = Math.max(els("laneScroll").clientWidth || 400, wNeeded);
   const c = setupCanvas(els("laneCv"), w, h);
   c.fillStyle = CSSVAR("--panel"); c.fillRect(0, 0, w, h);
@@ -1118,12 +1170,12 @@ function renderLanes(){
   if (grid){
     const sub = grid.sub || 1, perBar = sub*4;
     const tol = 15*pxMs;                       // the ±15 ms window, in pixels
-    for (let k=kMin; k<=kMax; k++){
+    for (let k=kStart; k<=kEnd; k++){
       c.fillStyle = "rgba(255,255,255,.05)";
       c.fillRect(colX(k) - tol, top, tol*2, bot - top);
     }
     c.textBaseline = "top";
-    for (let k=kMin; k<=kMax; k++){
+    for (let k=kStart; k<=kEnd; k++){
       const x = colX(k);
       const bar = ((k % perBar) + perBar) % perBar === 0;
       const beat = ((k % sub) + sub) % sub === 0;
@@ -1133,7 +1185,7 @@ function renderLanes(){
       if (bar){
         c.fillStyle = CSSVAR("--faint");
         c.font = "10px " + CSSVAR("--num");
-        c.fillText(String(Math.round(k/perBar) + 1) + "小節", x + 4, bot + 8);
+        c.fillText(String(Math.floor((k - kMin)/perBar) + 1) + "小節", x + 4, bot + 8);
       }
     }
   }
@@ -1188,7 +1240,8 @@ function renderLanes(){
     c.fillStyle = CSSVAR("--faint");
     c.font = "10px " + CSSVAR("--num");
     c.textBaseline = "top";
-    for (let t=0; t<=dur; t++) c.fillText(t + "s", padL + t*pps - 6, bot + 8);
+    for (let t=Math.ceil(kStart); t<=Math.min(dur, kEnd); t++)
+      c.fillText(t + "s", padL + (t - kStart)*pps - 6, bot + 8);
   }
 }
 
@@ -1324,6 +1377,15 @@ bindSeg("subDiv", v => { settings.sub = +v; reanalyse(); });
 els("bpm").addEventListener("input", e => {
   const v = +e.target.value;
   if (v >= 30 && v <= 300){ settings.bpm = v; reanalyse(); }
+});
+
+els("pagePrev").addEventListener("click", () => {
+  settings.page = Math.max(0, settings.page - 1);
+  if (lastAnalysis) renderLanes();
+});
+els("pageNext").addEventListener("click", () => {
+  settings.page = settings.page + 1;
+  if (lastAnalysis) renderLanes();
 });
 
 let rt = null;
