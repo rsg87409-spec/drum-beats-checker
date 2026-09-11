@@ -125,6 +125,16 @@
   audio{width:100%;margin-top:12px}
 
   .empty{color:var(--faint);font-size:13px;padding:26px 0;text-align:center;line-height:1.8}
+  .fileRow{padding:18px 0 4px;border-top:1px solid var(--line-soft);margin-top:20px}
+  .filebtn{
+    display:inline-block;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    font-size:14px;padding:11px 18px;border-radius:5px;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .filebtn:hover{background:var(--raised);border-color:var(--dim)}
+  #fileIn{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+  #fileIn:focus-visible + #fileNote{outline:none}
+  #fileNote{color:var(--faint);font-size:12.5px;margin-top:10px;line-height:1.7}
   .hidden{display:none !important}
   .note{color:var(--dim);font-size:12.5px;line-height:1.8}
   .note b{color:var(--text);font-weight:600}
@@ -147,6 +157,12 @@
   </div>
 </div>
 <div class="meter"><i id="meterBar"></i></div>
+
+<div class="fileRow">
+  <label class="filebtn" for="fileIn">音声ファイルを解析</label>
+  <input type="file" id="fileIn" accept="audio/*,video/*">
+  <div id="fileNote">端末に保存してある録音や動画を読み込みます。最初の3分までを見ます。</div>
+</div>
 
 <div id="results" class="hidden">
 
@@ -551,12 +567,18 @@ function fitGrid(times, period, phase){
 }
 
 function guessSubdivision(period){
-  // which musical value makes the tempo land in a plausible range?
-  for (const sub of [4, 2, 3, 1, 6, 8]){
+  // The onsets alone can't say whether a step is an eighth or a sixteenth, so
+  // pick the reading whose tempo sits closest to where drummers actually play,
+  // and lean away from triplets since duple subdivisions are far more common.
+  const CENTRE = 110;
+  let best = null;
+  for (const sub of [1, 2, 3, 4, 6, 8]){
     const bpm = 60/(period*sub);
-    if (bpm >= 55 && bpm <= 220) return { sub, bpm };
+    if (bpm < 40 || bpm > 260) continue;
+    const cost = Math.abs(Math.log(bpm/CENTRE)) + (sub === 3 || sub === 6 ? 0.45 : 0);
+    if (!best || cost < best.cost) best = { sub, bpm, cost };
   }
-  return { sub:1, bpm:60/period };
+  return best || { sub:1, bpm:60/period };
 }
 const SUB_NAME = {1:"4分", 2:"8分", 3:"3連8分", 4:"16分", 6:"3連16分", 8:"32分"};
 
@@ -784,6 +806,70 @@ function preparePlayback(pcm, sr){
 
 recBtn.addEventListener("click", () => {
   if (recording) stopRecording(); else startRecording();
+});
+
+/* ------------------------------------------------------------
+   Analyse a file from the device instead of the microphone
+   ------------------------------------------------------------ */
+const MAX_FILE_SEC = 180;
+
+function decode(ac, buf){
+  return new Promise((res, rej) => {
+    const p = ac.decodeAudioData(buf, res, rej);
+    if (p && p.then) p.then(res, rej);
+  });
+}
+
+els("fileIn").addEventListener("change", async ev => {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  const note = els("fileNote");
+  note.style.color = "var(--dim)";
+  note.textContent = f.name + " を読み込んでいます…";
+
+  let ab;
+  try {
+    const raw = await f.arrayBuffer();
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    await ac.resume();
+    ab = await decode(ac, raw);
+    ac.close();
+  } catch (e){
+    note.style.color = "var(--bad)";
+    note.textContent = "この形式は読み込めませんでした。m4a / mp3 / wav / mp4 を試してください。";
+    ev.target.value = "";
+    return;
+  }
+
+  const sr = ab.sampleRate;
+  const n = Math.min(ab.length, Math.round(MAX_FILE_SEC*sr));
+  const pcm = new Float32Array(n);
+  const chs = ab.numberOfChannels;
+  for (let c=0; c<chs; c++){
+    const d = ab.getChannelData(c);
+    for (let i=0; i<n; i++) pcm[i] += d[i]/chs;
+  }
+
+  note.textContent = "解析しています…（" + (n/sr).toFixed(0) + "秒）";
+  setTimeout(() => {
+    try {
+      recorded = { pcm, sr };
+      fluxCache = computeFlux(pcm, sr);
+      reanalyse();
+      preparePlayback(pcm, sr);
+      results.classList.remove("hidden");
+      emptyState.classList.add("hidden");
+      note.style.color = "var(--faint)";
+      note.textContent = f.name + " ・ " + (n/sr).toFixed(1) + "秒を解析しました" +
+        (ab.length > n ? "（長いので最初の3分だけ）" : "");
+      results.scrollIntoView({ behavior:"smooth", block:"start" });
+    } catch (e){
+      console.error(e);
+      note.style.color = "var(--bad)";
+      note.textContent = "解析に失敗しました: " + e.message;
+    }
+    ev.target.value = "";
+  }, 40);
 });
 
 els("dlBtn").addEventListener("click", () => {
