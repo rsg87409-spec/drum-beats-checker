@@ -1,0 +1,1272 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#14171A">
+<title>ドラム タイミング チェック — サンプル</title>
+<style>
+  :root{
+    --bg:#14171A;
+    --panel:#1B2024;
+    --raised:#242A2F;
+    --line:#2F373D;
+    --line-soft:#232A2F;
+    --text:#E7EBEC;
+    --dim:#8A959C;
+    --faint:#5D686F;
+    --neutral:#C9D1D6;
+    --early:#4FC3D9;
+    --late:#E9A33C;
+    --bad:#E2685E;
+    --ok:#7FC79A;
+    --num: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace;
+    --ja: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--ja);
+    font-size:15px;
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+    -webkit-text-size-adjust:100%;
+    padding:0 0 env(safe-area-inset-bottom);
+  }
+  .wrap{max-width:560px;margin:0 auto;padding:0 18px}
+
+  header{padding:22px 0 18px;border-bottom:1px solid var(--line)}
+  h1{font-size:16px;font-weight:600;margin:0;letter-spacing:.02em}
+  header p{margin:4px 0 0;color:var(--dim);font-size:13px;line-height:1.6}
+
+  section{padding:22px 0;border-bottom:1px solid var(--line-soft)}
+  section:last-of-type{border-bottom:none}
+  h2{font-size:13px;font-weight:600;color:var(--dim);margin:0 0 14px;letter-spacing:.03em}
+
+  /* ---- transport ---- */
+  .transport{display:flex;align-items:center;gap:16px;padding:26px 0}
+  .rec{
+    flex:0 0 auto;width:76px;height:76px;border-radius:50%;
+    border:2px solid var(--line);background:var(--raised);
+    display:grid;place-items:center;cursor:pointer;
+    transition:border-color .15s, background .15s;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .rec:disabled{opacity:.4;cursor:default}
+  .rec .dot{width:26px;height:26px;border-radius:50%;background:var(--bad);transition:all .18s ease}
+  .rec[data-state="rec"]{border-color:var(--bad);background:#2B1D1C}
+  .rec[data-state="rec"] .dot{width:22px;height:22px;border-radius:4px}
+  .rec:focus-visible{outline:2px solid var(--early);outline-offset:3px}
+  .readout{min-width:0}
+  .clock{font-family:var(--num);font-size:40px;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .status{color:var(--dim);font-size:13px;margin-top:6px}
+  .status.err{color:var(--bad)}
+
+  .meter{height:3px;background:var(--line-soft);border-radius:2px;overflow:hidden;margin-top:12px}
+  .meter i{display:block;height:100%;width:0;background:var(--ok);transition:width .06s linear}
+  .meter i.hot{background:var(--bad)}
+
+  /* ---- big numbers ---- */
+  .figs{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line-soft);border:1px solid var(--line-soft)}
+  .fig{background:var(--panel);padding:14px 14px 16px}
+  .fig .k{font-size:12px;color:var(--dim);margin-bottom:2px}
+  .fig .v{font-family:var(--num);font-size:30px;line-height:1.15;font-variant-numeric:tabular-nums}
+  .fig .u{font-size:13px;color:var(--faint);margin-left:3px;font-family:var(--ja)}
+  .fig .sub{font-size:12px;color:var(--faint);margin-top:4px}
+
+  .rows{margin-top:14px;font-size:13px}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dotted var(--line-soft)}
+  .row:last-child{border-bottom:none}
+  .row span:first-child{color:var(--dim)}
+  .row span:last-child{font-family:var(--num);font-variant-numeric:tabular-nums}
+
+  /* ---- canvases ---- */
+  .scroller{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;border:1px solid var(--line-soft);background:var(--panel)}
+  canvas{display:block}
+  .cap{color:var(--faint);font-size:12px;margin-top:8px;line-height:1.6}
+  .warn{font-size:12.5px;line-height:1.7;color:var(--late);margin:12px 0 0;padding-left:12px;border-left:2px solid var(--late)}
+
+  /* ---- controls ---- */
+  .ctl{margin-bottom:16px}
+  .ctl label{display:flex;justify-content:space-between;font-size:13px;color:var(--dim);margin-bottom:6px}
+  .ctl label b{font-family:var(--num);font-weight:400;color:var(--text);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--early);height:26px}
+  .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+  .seg button{
+    flex:1;background:var(--panel);color:var(--dim);border:none;padding:9px 4px;
+    font:inherit;font-size:13px;cursor:pointer;border-right:1px solid var(--line);
+    -webkit-tap-highlight-color:transparent;
+  }
+  .seg button:last-child{border-right:none}
+  .seg button[aria-pressed="true"]{background:var(--raised);color:var(--text)}
+  .bpmrow{display:flex;align-items:center;gap:10px;margin-top:12px}
+  .bpmrow input[type=number]{
+    width:96px;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    font-family:var(--num);font-size:17px;padding:8px 10px;border-radius:4px;
+  }
+  .bpmrow span{font-size:13px;color:var(--dim)}
+
+  details{border-top:1px solid var(--line-soft);padding-top:6px}
+  summary{cursor:pointer;color:var(--dim);font-size:13px;padding:10px 0;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"＋ ";color:var(--faint)}
+  details[open] summary::before{content:"－ "}
+
+  .mini{background:none;border:1px solid var(--line);color:var(--dim);font:inherit;font-size:13px;padding:8px 14px;border-radius:4px;cursor:pointer}
+  .mini:disabled{opacity:.4}
+  audio{width:100%;margin-top:12px}
+
+  .empty{color:var(--faint);font-size:13px;padding:26px 0;text-align:center;line-height:1.8}
+  .hidden{display:none !important}
+  .transport,.meter{display:none !important}
+  .demo{padding:20px 0 4px}
+  .demo p{margin:0 0 14px;color:var(--dim);font-size:13px;line-height:1.7}
+  .demo .pick{display:grid;gap:8px}
+  .demo button{
+    text-align:left;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    font:inherit;padding:13px 15px;border-radius:5px;cursor:pointer;line-height:1.5;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .demo button:hover,.demo button:focus-visible{background:var(--raised);outline:none;border-color:var(--dim)}
+  .demo button small{display:block;color:var(--faint);font-size:12px;margin-top:2px}
+  .demo button:disabled{opacity:.45;cursor:default}
+  #demoNote{margin-top:14px;color:var(--faint);font-size:12.5px;min-height:1.6em}
+  .note{color:var(--dim);font-size:12.5px;line-height:1.8}
+  .note b{color:var(--text);font-weight:600}
+  @media (prefers-reduced-motion: reduce){*{transition:none !important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>ドラム タイミング チェック</h1>
+  <p>演奏を録音して、打点がグリッドに乗っているか（横）と、同時に叩いた音が揃っているか（縦）を見ます。</p>
+</header>
+
+<div class="demo">
+  <p>マイクの代わりに、打点の時刻がわかっている演奏をその場で合成して解析します。実機で録音したときと同じ処理・同じ画面です。</p>
+  <div class="pick">
+    <button data-s="tight">揃った演奏<small>8分 100BPM ・ わざと 5ms のばらつきを入れてある</small></button>
+    <button data-s="loose">ヨレた演奏<small>同じフレーズ ・ ばらつき 22ms</small></button>
+    <button data-s="drift">だんだん走る演奏<small>20秒かけてテンポが 6% 上がる</small></button>
+  </div>
+  <div id="demoNote"></div>
+</div>
+
+<div class="transport">
+  <button class="rec" id="recBtn" data-state="idle" aria-label="録音を開始"><span class="dot"></span></button>
+  <div class="readout">
+    <div class="clock" id="clock">0:00</div>
+    <div class="status" id="status">マイクを許可すると録音できます</div>
+  </div>
+</div>
+<div class="meter"><i id="meterBar"></i></div>
+
+<div id="results" class="hidden">
+
+  <section>
+    <div class="figs">
+      <div class="fig">
+        <div class="k">横のばらつき</div>
+        <div class="v" id="hVal">–<span class="u">ms</span></div>
+        <div class="sub" id="hSub">グリッドからの標準偏差</div>
+      </div>
+      <div class="fig">
+        <div class="k">縦のばらつき</div>
+        <div class="v" id="vVal">–<span class="u">ms</span></div>
+        <div class="sub" id="vSub">同時打点の開き（平均）</div>
+      </div>
+    </div>
+    <div class="rows">
+      <div class="row"><span>推定テンポ</span><span id="rBpm">–</span></div>
+      <div class="row"><span>検出した打点</span><span id="rCount">–</span></div>
+      <div class="row"><span>平均のズレ方</span><span id="rBias">–</span></div>
+      <div class="row"><span>最大のズレ</span><span id="rMax">–</span></div>
+      <div class="row"><span>グリッド ±15ms 以内</span><span id="rIn">–</span></div>
+    </div>
+    <p class="warn hidden" id="gridWarn"></p>
+  </section>
+
+  <section>
+    <h2>打点と グリッド</h2>
+    <div class="scroller" id="laneScroll"><canvas id="laneCv"></canvas></div>
+    <div class="ctl" style="margin-top:12px">
+      <label for="zoom">表示の拡大 <b id="zoomV">120 px/秒</b></label>
+      <input type="range" id="zoom" min="40" max="400" step="10" value="120">
+    </div>
+    <p class="cap">縦の細い線がグリッド、太い線が拍アタマ。点が打点で、左にズレる（走り）ほど青、右にズレる（もたり）ほど橙になります。帯をまたぐ縦の連結線は、同時に叩いた音のかたまりです。</p>
+  </section>
+
+  <section>
+    <h2>1打ごとのズレ</h2>
+    <canvas id="devCv"></canvas>
+    <p class="cap">横軸は時間、縦軸はグリッドからのズレ。上が もたり、下が 走り。灰色の帯が ±15ms です。</p>
+  </section>
+
+  <section>
+    <h2>ズレの分布</h2>
+    <canvas id="hisCv"></canvas>
+    <p class="cap">山が中央にあれば正確、左右どちらかに寄っていれば癖、裾が広ければ不安定です。</p>
+  </section>
+
+  <section>
+    <h2>解析の設定</h2>
+    <div class="ctl">
+      <label for="sens">検出の感度 <b id="sensV">7</b></label>
+      <input type="range" id="sens" min="1" max="10" step="1" value="7">
+    </div>
+    <div class="ctl">
+      <label for="gap">同じ打点とみなす最短間隔 <b id="gapV">45 ms</b></label>
+      <input type="range" id="gap" min="20" max="150" step="5" value="45">
+    </div>
+    <div class="ctl">
+      <label for="gate">帯域の振り分けの厳しさ <b id="gateV">12 %</b></label>
+      <input type="range" id="gate" min="2" max="30" step="1" value="12">
+    </div>
+    <div class="ctl">
+      <label>グリッドの決め方</label>
+      <div class="seg" id="gridMode">
+        <button data-v="auto" aria-pressed="true">録音から推定</button>
+        <button data-v="manual" aria-pressed="false">自分で指定</button>
+      </div>
+      <div class="bpmrow hidden" id="manualRow">
+        <input type="number" id="bpm" value="100" min="30" max="300" step="1" inputmode="numeric">
+        <span>BPM</span>
+        <div class="seg" id="subDiv" style="flex:1">
+          <button data-v="1" aria-pressed="false">4分</button>
+          <button data-v="2" aria-pressed="true">8分</button>
+          <button data-v="3" aria-pressed="false">3連</button>
+          <button data-v="4" aria-pressed="false">16分</button>
+        </div>
+      </div>
+    </div>
+    <p class="cap">上げるほど、低域・中域・高域それぞれに「その帯域がはっきり鳴ったとき」だけ点を置きます。一つの打点が3本とも光るなら上げてください。<br><br>思った結果にならないときは、まず感度を動かしてください。打点が多すぎるなら下げる、拾えていないなら上げる。録り直しは不要で、その場で解析し直します。</p>
+  </section>
+
+  <section>
+    <h2>録音の確認</h2>
+    <audio id="player" controls preload="none"></audio>
+    <div style="margin-top:12px;display:flex;gap:10px">
+      <button class="mini" id="dlBtn">WAV を保存</button>
+    </div>
+  </section>
+
+</div>
+
+<div id="emptyState" class="empty">
+  上のどれかを選ぶと、ここに解析結果が出ます。
+</div>
+
+<section>
+  <details>
+    <summary>うまく動かないとき / 精度について</summary>
+    <p class="note">
+      <b>マイクが使えない</b>：このページが <code>https://</code> で開かれているか確認してください。ファイルを直接開くとマイクは許可されません。一度「許可しない」を選んだ場合は、設定 → Safari → Webサイトの設定 → マイク から戻せます。<br><br>
+      <b>音の割れ</b>：バスドラやクラッシュの音圧でマイクが飽和すると、打点の頭がつぶれて検出がズレます。上のレベルメーターが赤く振り切れるなら、スマホを遠ざけてください。<br><br>
+      <b>帯域の振り分けは目安です</b>：低域・中域・高域は周波数で分けているだけなので、スネアが高域にも出る、ハイハットが中域に混じる、といったことは起きます。楽器名ではなく「どの帯域が鳴ったか」として見てください。信頼できるのは打点の時刻で、そこから出る横のズレが一番確かな数字です。<br><br>
+      <b>縦のズレ</b>：バスドラとハイハットのように帯域が離れた組み合わせは測れますが、スネアとハイハットのように重なる音は分離しきれません。数ms の値は参考程度に。
+    </p>
+  </details>
+</section>
+
+<section style="padding-bottom:44px">
+  <p class="note" style="color:var(--faint)">音声は端末の中だけで処理され、どこにも送信されません。</p>
+</section>
+
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   FFT (iterative radix-2)
+   ============================================================ */
+function FFT(n){
+  this.n = n;
+  this.levels = Math.log2(n) | 0;
+  if (1 << this.levels !== n) throw new Error("FFT size must be a power of 2");
+  this.cos = new Float64Array(n/2);
+  this.sin = new Float64Array(n/2);
+  for (let i=0;i<n/2;i++){
+    this.cos[i] = Math.cos(2*Math.PI*i/n);
+    this.sin[i] = Math.sin(2*Math.PI*i/n);
+  }
+  this.rev = new Uint32Array(n);
+  for (let i=0;i<n;i++){
+    let x = i, r = 0;
+    for (let j=0;j<this.levels;j++){ r = (r<<1) | (x&1); x >>= 1; }
+    this.rev[i] = r;
+  }
+}
+FFT.prototype.forward = function(re, im){
+  const n = this.n, rev = this.rev, cos = this.cos, sin = this.sin;
+  for (let i=0;i<n;i++){
+    const j = rev[i];
+    if (j > i){
+      let t = re[i]; re[i] = re[j]; re[j] = t;
+      t = im[i]; im[i] = im[j]; im[j] = t;
+    }
+  }
+  for (let size=2; size<=n; size<<=1){
+    const half = size>>1, step = n/size;
+    for (let i=0;i<n;i+=size){
+      for (let j=i,k=0; j<i+half; j++, k+=step){
+        const l = j + half;
+        const tre =  re[l]*cos[k] + im[l]*sin[k];
+        const tim = -re[l]*sin[k] + im[l]*cos[k];
+        re[l] = re[j] - tre; im[l] = im[j] - tim;
+        re[j] += tre;        im[j] += tim;
+      }
+    }
+  }
+};
+
+/* ============================================================
+   Onset strength (spectral flux) per frequency band
+   ============================================================ */
+const FRAME = 1024;
+const HOP   = 128;
+
+const BANDS = [
+  { key:"all",  lo:30,   hi:16000, label:"全帯域" },
+  { key:"low",  lo:30,   hi:150,   label:"低域  30–150Hz" },
+  { key:"mid",  lo:180,  hi:1800,  label:"中域  180–1.8kHz" },
+  { key:"high", lo:5000, hi:15000, label:"高域  5k–15kHz" }
+];
+
+const TOP_DB = 70;   // anything quieter than this below the loudest bin counts as silence
+
+function computeFlux(pcm, sr){
+  const fft = new FFT(FRAME);
+  const win = new Float64Array(FRAME);
+  for (let i=0;i<FRAME;i++) win[i] = 0.5 - 0.5*Math.cos(2*Math.PI*i/FRAME);
+
+  const nBins = FRAME/2 + 1;
+  const binHz = sr / FRAME;
+  const ranges = BANDS.map(b => ({
+    a: Math.max(1, Math.floor(b.lo/binHz)),
+    b: Math.min(nBins-1, Math.ceil(b.hi/binHz))
+  }));
+
+  const nFrames = Math.max(0, Math.floor((pcm.length - FRAME)/HOP) + 1);
+  const flux = BANDS.map(() => new Float32Array(nFrames));
+  const energy = BANDS.map(() => new Float32Array(nFrames));
+  const re = new Float64Array(FRAME), im = new Float64Array(FRAME);
+
+  const loadFrame = off => {
+    for (let i=0;i<FRAME;i++){ re[i] = pcm[off+i]*win[i]; im[i] = 0; }
+    fft.forward(re, im);
+  };
+
+  // Pass A (decimated): find the loudest bin so the dB floor can be set relative to it.
+  let gmax = 1e-9;
+  for (let f=0; f<nFrames; f+=8){
+    loadFrame(f*HOP);
+    for (let k=1;k<nBins;k++){
+      const m = re[k]*re[k] + im[k]*im[k];
+      if (m > gmax) gmax = m;
+    }
+  }
+  gmax = Math.sqrt(gmax);
+  const floor = gmax * Math.pow(10, -TOP_DB/20);
+
+  // Pass B: dB spectra, flux against a frequency-max-filtered previous frame
+  let prev = new Float32Array(nBins).fill(-TOP_DB);
+  let cur  = new Float32Array(nBins);
+
+  for (let f=0; f<nFrames; f++){
+    loadFrame(f*HOP);
+    for (let k=0;k<nBins;k++){
+      const m = Math.sqrt(re[k]*re[k] + im[k]*im[k]);
+      cur[k] = 20*Math.log10(Math.max(m, floor)/gmax);
+    }
+    for (let bi=0; bi<BANDS.length; bi++){
+      const r = ranges[bi];
+      let e = 0;
+      for (let k=r.a; k<=r.b; k++) e += re[k]*re[k] + im[k]*im[k];
+      energy[bi][f] = e/(r.b - r.a + 1);
+    }
+    if (f > 0){
+      for (let bi=0; bi<BANDS.length; bi++){
+        const r = ranges[bi];
+        let s = 0;
+        for (let k=r.a; k<=r.b; k++){
+          // compare against the loudest neighbouring bin of the previous frame,
+          // so decay and slight pitch drift don't register as a new attack
+          let p = prev[k];
+          if (k > 0 && prev[k-1] > p) p = prev[k-1];
+          if (k < nBins-1 && prev[k+1] > p) p = prev[k+1];
+          const d = cur[k] - p;
+          if (d > 0) s += d;
+        }
+        flux[bi][f] = s/(r.b - r.a + 1);   // mean dB rise per bin, comparable across bands
+      }
+    }
+    const t = prev; prev = cur; cur = t;
+  }
+
+  const scale = new Float64Array(flux.length);
+  for (let bi=0; bi<flux.length; bi++){
+    const c = flux[bi];
+    // light 3-tap smoothing, then normalise to 0..1
+    const sm = new Float32Array(c.length);
+    for (let i=0;i<c.length;i++){
+      const a = c[i-1] !== undefined ? c[i-1] : c[i];
+      const b = c[i+1] !== undefined ? c[i+1] : c[i];
+      sm[i] = (a + 2*c[i] + b)/4;
+    }
+    let mx = 0;
+    for (let i=0;i<sm.length;i++) if (sm[i] > mx) mx = sm[i];
+    scale[bi] = mx || 1;
+    if (mx > 0) for (let i=0;i<sm.length;i++) sm[i] /= mx;
+    flux[bi] = sm;
+  }
+  return { flux, energy, scale, nFrames, hopTime: HOP/sr };
+}
+
+/* ------------------------------------------------------------
+   A sharp hit lifts every band a little, so spectral flux alone
+   puts the same stroke in all three lanes. Keep an onset only
+   where that band's actual energy jump is large for that band.
+   ------------------------------------------------------------ */
+function suppressBleed(byBand, energy, hopTime, threshold){
+  const lanes = [["low",1],["mid",2],["high",3]];
+  const back = Math.max(2, Math.round(0.022/hopTime));
+  const fwd  = Math.max(2, Math.round(0.022/hopTime));
+
+  const riseAt = (curve, f) => {
+    let base = Infinity, peak = 0;
+    for (let j=Math.max(0,f-back); j<f; j++) if (curve[j] < base) base = curve[j];
+    for (let j=f; j<=Math.min(curve.length-1, f+fwd); j++) if (curve[j] > peak) peak = curve[j];
+    if (!isFinite(base)) base = 0;
+    return Math.max(0, peak - base);
+  };
+
+  const out = { all: byBand.all };
+  for (const [key, bi] of lanes){
+    const cand = byBand[key] || [];
+    const rises = cand.map(o => riseAt(energy[bi], o.frame));
+    const top = Math.max(...rises, 1e-12);
+    out[key] = cand.filter((o, i) => rises[i] >= top*threshold);
+  }
+  return out;
+}
+
+/* ============================================================
+   Peak picking with an adaptive (median) threshold
+   ============================================================ */
+function pickPeaks(curve, hopTime, sensitivity, minGapSec){
+  const n = curve.length;
+  if (n < 8) return [];
+
+  // a peak must be the highest point nearby, and clearly above the local average
+  const wMax = Math.max(2, Math.round(0.025/hopTime));
+  const preAvg = Math.max(4, Math.round(0.090/hopTime));
+  const postAvg = Math.max(2, Math.round(0.030/hopTime));
+  const wait = Math.max(1, Math.round(minGapSec/hopTime));
+
+  const s = Math.max(1, Math.min(10, sensitivity));
+  const delta = 0.015 + (10 - s)*0.022;   // sens 10 → 0.015, sens 1 → 0.213
+
+  // running sum for the local mean
+  const cum = new Float64Array(n+1);
+  for (let i=0;i<n;i++) cum[i+1] = cum[i] + curve[i];
+  const meanOf = (a, b) => {
+    a = Math.max(0, a); b = Math.min(n-1, b);
+    return (cum[b+1] - cum[a])/(b - a + 1);
+  };
+
+  const out = [];
+  let last = -1e9;
+  for (let i=1;i<n-1;i++){
+    const v = curve[i];
+    if (v < delta) continue;
+    if (i - last < wait) continue;
+
+    let isMax = true;
+    for (let j=Math.max(0,i-wMax); j<=Math.min(n-1,i+wMax); j++){
+      if (curve[j] > v){ isMax = false; break; }
+    }
+    if (!isMax) continue;
+    if (v <= curve[i-1]) continue;                 // reject plateaus, keep the rising edge
+    if (v < meanOf(i-preAvg, i+postAvg) + delta) continue;
+
+    // parabolic interpolation for sub-frame precision
+    const y0 = curve[i-1], y2 = curve[i+1];
+    const den = y0 - 2*v + y2;
+    const shift = den !== 0 ? 0.5*(y0 - y2)/den : 0;
+    out.push({ frame:i, t:(i + Math.max(-1,Math.min(1,shift)))*hopTime, strength:v });
+    last = i;
+  }
+  return out;
+}
+
+/* ============================================================
+   Grid estimation
+   Z(P) = |Σ exp(2πi·t/P)| peaks at the tatum and all its divisors,
+   so take the LONGEST period that still scores near the maximum.
+   ============================================================ */
+function estimatePeriod(times, minP, maxP){
+  if (times.length < 4) return null;
+  const STEPS = 3000;
+  const lnA = Math.log(minP), lnB = Math.log(maxP);
+  let best = { score:-1, P:0, phase:0 };
+  const all = new Array(STEPS);
+
+  for (let s=0; s<STEPS; s++){
+    const P = Math.exp(lnA + (lnB-lnA)*s/(STEPS-1));
+    let sr = 0, si = 0;
+    for (let i=0;i<times.length;i++){
+      const a = 2*Math.PI*times[i]/P;
+      sr += Math.cos(a); si += Math.sin(a);
+    }
+    const score = Math.hypot(sr, si)/times.length;
+    all[s] = { P, score, phase: Math.atan2(si, sr)*P/(2*Math.PI) };
+    if (score > best.score) best = all[s];
+  }
+  // longest period still explaining the onsets nearly as well
+  let chosen = best;
+  for (let s=STEPS-1; s>=0; s--){
+    if (all[s].score >= best.score*0.90){ chosen = all[s]; break; }
+  }
+  return { period: chosen.P, phase: chosen.phase, confidence: chosen.score };
+}
+
+function fitGrid(times, period, phase){
+  let P = period, ph = phase;
+  for (let iter=0; iter<4; iter++){
+    const ks = times.map(t => Math.round((t - ph)/P));
+    let n=0, sk=0, st=0, skk=0, skt=0;
+    for (let i=0;i<times.length;i++){
+      const k = ks[i], t = times[i];
+      n++; sk += k; st += t; skk += k*k; skt += k*t;
+    }
+    const den = n*skk - sk*sk;
+    if (den === 0) break;
+    const a = (n*skt - sk*st)/den;
+    const b = (st - a*sk)/n;
+    if (!isFinite(a) || a <= 0) break;
+    P = a; ph = b;
+  }
+  const devs = times.map(t => {
+    const k = Math.round((t - ph)/P);
+    return { t, k, dev: t - (ph + k*P) };
+  });
+  return { period:P, phase:ph, devs };
+}
+
+function guessSubdivision(period){
+  // which musical value makes the tempo land in a plausible range?
+  for (const sub of [4, 2, 3, 1, 6, 8]){
+    const bpm = 60/(period*sub);
+    if (bpm >= 55 && bpm <= 220) return { sub, bpm };
+  }
+  return { sub:1, bpm:60/period };
+}
+const SUB_NAME = {1:"4分", 2:"8分", 3:"3連8分", 4:"16分", 6:"3連16分", 8:"32分"};
+
+/* ============================================================
+   Vertical alignment: group band onsets that were meant together
+   ============================================================ */
+function clusterAcrossBands(byBand, windowSec){
+  const pts = [];
+  ["low","mid","high"].forEach(k => {
+    (byBand[k]||[]).forEach(o => pts.push({ band:k, t:o.t }));
+  });
+  pts.sort((a,b)=>a.t-b.t);
+
+  const clusters = [];
+  let cur = [];
+  for (const p of pts){
+    if (cur.length && p.t - cur[cur.length-1].t > windowSec){
+      clusters.push(cur); cur = [];
+    }
+    cur.push(p);
+  }
+  if (cur.length) clusters.push(cur);
+
+  return clusters
+    .map(c => {
+      const bands = new Set(c.map(p=>p.band));
+      if (bands.size < 2) return null;
+      const ts = c.map(p=>p.t);
+      return { start:Math.min(...ts), end:Math.max(...ts), spread:Math.max(...ts)-Math.min(...ts), members:c };
+    })
+    .filter(Boolean);
+}
+
+/* ============================================================
+   WAV encoding
+   ============================================================ */
+function encodeWAV(pcm, sr){
+  const buf = new ArrayBuffer(44 + pcm.length*2);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+  str(0,"RIFF"); v.setUint32(4, 36 + pcm.length*2, true); str(8,"WAVE");
+  str(12,"fmt "); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  str(36,"data"); v.setUint32(40, pcm.length*2, true);
+  let o = 44;
+  for (let i=0;i<pcm.length;i++){
+    let s = Math.max(-1, Math.min(1, pcm[i]));
+    v.setInt16(o, s < 0 ? s*0x8000 : s*0x7FFF, true);
+    o += 2;
+  }
+  return new Blob([buf], { type:"audio/wav" });
+}
+
+/* ============================================================
+   Recording
+   ============================================================ */
+const MAX_SEC = 120;
+const els = id => document.getElementById(id);
+const recBtn = els("recBtn"), clock = els("clock"), statusEl = els("status"),
+      meterBar = els("meterBar"), results = els("results"), emptyState = els("emptyState");
+
+let ctx = null, stream = null, node = null, srcNode = null;
+let chunks = [], total = 0, recording = false, startedAt = 0, tick = null;
+let recorded = null;      // { pcm, sr }
+let fluxCache = null;     // { flux, nFrames, hopTime }
+let lastAnalysis = null;
+let wavURL = null;
+
+function fmtClock(sec){
+  const m = Math.floor(sec/60), s = Math.floor(sec%60);
+  return m + ":" + String(s).padStart(2,"0");
+}
+
+const WORKLET_SRC = `
+class RecProc extends AudioWorkletProcessor {
+  constructor(){ super(); this.buf = new Float32Array(2048); this.n = 0; this.peak = 0; this.since = 0; }
+  process(inputs){
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i=0;i<ch.length;i++){
+      const a = ch[i] < 0 ? -ch[i] : ch[i];
+      if (a > this.peak) this.peak = a;
+      this.buf[this.n++] = ch[i];
+      if (this.n === this.buf.length){
+        this.port.postMessage({ pcm: this.buf }, []);
+        this.buf = new Float32Array(2048); this.n = 0;
+      }
+    }
+    this.since += ch.length;
+    if (this.since >= 2048){
+      this.port.postMessage({ peak: this.peak });
+      this.peak = 0; this.since = 0;
+    }
+    return true;
+  }
+}
+registerProcessor('rec-proc', RecProc);
+`;
+
+async function startRecording(){
+  setStatus("マイクを準備しています");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1
+      }
+    });
+  } catch (e){
+    setStatus(describeMicError(e), true);
+    return;
+  }
+
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    srcNode = ctx.createMediaStreamSource(stream);
+
+    const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type:"application/javascript" }));
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+
+    node = new AudioWorkletNode(ctx, "rec-proc", { numberOfInputs:1, numberOfOutputs:1, outputChannelCount:[1] });
+    node.port.onmessage = ev => {
+      const d = ev.data;
+      if (d.pcm){ chunks.push(d.pcm); total += d.pcm.length; }
+      if (d.peak !== undefined) updateMeter(d.peak);
+    };
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+    srcNode.connect(node).connect(sink).connect(ctx.destination);
+  } catch (e){
+    setStatus("音声処理を開始できませんでした。ページを再読み込みしてください。", true);
+    cleanup();
+    return;
+  }
+
+  chunks = []; total = 0; recording = true; startedAt = performance.now();
+  recBtn.dataset.state = "rec";
+  recBtn.setAttribute("aria-label","録音を停止");
+  setStatus("録音中。止めると解析します");
+  tick = setInterval(() => {
+    const sec = (performance.now() - startedAt)/1000;
+    clock.textContent = fmtClock(sec);
+    if (sec >= MAX_SEC) stopRecording();
+  }, 200);
+}
+
+function describeMicError(e){
+  const n = e && e.name;
+  if (n === "NotAllowedError") return "マイクが許可されていません。設定 → Safari → Webサイトの設定 → マイク から許可してください。";
+  if (n === "NotFoundError") return "マイクが見つかりませんでした。";
+  if (!window.isSecureContext) return "https:// で開いてください。ファイルを直接開くとマイクは使えません。";
+  return "マイクを開けませんでした（" + (n || "不明なエラー") + "）。";
+}
+
+let peakHold = 0;
+function updateMeter(p){
+  peakHold = Math.max(p, peakHold*0.82);
+  const db = 20*Math.log10(Math.max(peakHold, 1e-4));
+  const pct = Math.max(0, Math.min(100, (db + 60)/60*100));
+  meterBar.style.width = pct + "%";
+  meterBar.classList.toggle("hot", peakHold > 0.95);
+}
+
+function stopRecording(){
+  if (!recording) return;
+  recording = false;
+  clearInterval(tick); tick = null;
+  recBtn.dataset.state = "idle";
+  recBtn.setAttribute("aria-label","録音を開始");
+  meterBar.style.width = "0%";
+
+  const sr = ctx.sampleRate;
+  const pcm = new Float32Array(total);
+  let o = 0;
+  for (const c of chunks){ pcm.set(c, o); o += c.length; }
+  chunks = [];
+  cleanup();
+
+  if (pcm.length < sr*0.5){
+    setStatus("録音が短すぎます。数秒叩いてからもう一度。", true);
+    return;
+  }
+  recorded = { pcm, sr };
+  setStatus("解析しています…");
+  recBtn.disabled = true;
+
+  setTimeout(() => {
+    try {
+      fluxCache = computeFlux(pcm, sr);
+      reanalyse();
+      preparePlayback(pcm, sr);
+      results.classList.remove("hidden");
+      emptyState.classList.add("hidden");
+      setStatus(fmtClock(pcm.length/sr) + " を解析しました");
+    } catch (err){
+      console.error(err);
+      setStatus("解析に失敗しました。もう一度録音してください。", true);
+    }
+    recBtn.disabled = false;
+  }, 30);
+}
+
+function cleanup(){
+  try { if (node) node.disconnect(); } catch(e){}
+  try { if (srcNode) srcNode.disconnect(); } catch(e){}
+  try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch(e){}
+  try { if (ctx) ctx.close(); } catch(e){}
+  node = srcNode = stream = null;
+}
+
+function setStatus(msg, isErr){
+  statusEl.textContent = msg;
+  statusEl.classList.toggle("err", !!isErr);
+}
+
+function preparePlayback(pcm, sr){
+  if (wavURL) URL.revokeObjectURL(wavURL);
+  wavURL = URL.createObjectURL(encodeWAV(pcm, sr));
+  els("player").src = wavURL;
+}
+
+recBtn.addEventListener("click", () => {
+  if (recording) stopRecording(); else startRecording();
+});
+
+els("dlBtn").addEventListener("click", () => {
+  if (!wavURL) return;
+  const a = document.createElement("a");
+  a.href = wavURL;
+  a.download = "drum-take.wav";
+  a.click();
+});
+
+/* ============================================================
+   Analysis pipeline (cheap to re-run — flux is cached)
+   ============================================================ */
+let settings = { sens:7, gap:0.045, gate:0.12, mode:"auto", bpm:100, sub:2, zoom:120 };
+
+function reanalyse(){
+  if (!fluxCache || !recorded) return;
+  const { flux, energy, hopTime } = fluxCache;
+  const dur = recorded.pcm.length / recorded.sr;
+
+  const raw = {};
+  BANDS.forEach((b, i) => {
+    raw[b.key] = pickPeaks(flux[i], hopTime, settings.sens, settings.gap);
+  });
+  const byBand = suppressBleed(raw, energy, hopTime, settings.gate);
+
+  const times = byBand.all.map(o => o.t);
+  let grid = null;
+
+  if (times.length >= 4){
+    if (settings.mode === "manual"){
+      const P = 60/settings.bpm/settings.sub;
+      let ph = estimatePeriodPhaseOnly(times, P);
+      for (let i=0;i<3;i++){
+        let sum = 0;
+        for (const t of times) sum += t - Math.round((t - ph)/P)*P;
+        ph = sum/times.length;
+      }
+      const devs = times.map(t => {
+        const k = Math.round((t - ph)/P);
+        return { t, k, dev: t - (ph + k*P) };
+      });
+      grid = { period:P, phase:ph, devs, sub:settings.sub, bpm:settings.bpm, confidence:1 };
+    } else {
+      const est = estimatePeriod(times, 0.085, Math.min(1.3, dur/3));
+      if (est){
+        grid = fitGrid(times, est.period, est.phase);
+        const g = guessSubdivision(grid.period);
+        grid.sub = g.sub; grid.bpm = g.bpm;
+        grid.confidence = est.confidence;
+      }
+    }
+  }
+
+  const clusters = clusterAcrossBands(byBand, settings.gap);
+  lastAnalysis = { byBand, grid, clusters, dur };
+  renderAll();
+}
+
+function estimatePeriodPhaseOnly(times, P){
+  let sr=0, si=0;
+  for (const t of times){ const a = 2*Math.PI*t/P; sr += Math.cos(a); si += Math.sin(a); }
+  return Math.atan2(si, sr)*P/(2*Math.PI);
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+const CSSVAR = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function hex2rgb(h){
+  h = h.replace("#","");
+  return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+}
+function mix(a, b, t){
+  const A = hex2rgb(a), B = hex2rgb(b);
+  return `rgb(${Math.round(A[0]+(B[0]-A[0])*t)},${Math.round(A[1]+(B[1]-A[1])*t)},${Math.round(A[2]+(B[2]-A[2])*t)})`;
+}
+function devColor(ms){
+  const NEU = CSSVAR("--neutral") || "#C9D1D6";
+  const a = Math.abs(ms);
+  if (a < 4) return NEU;
+  const t = Math.min(1, (a-4)/36);
+  return mix(NEU, ms < 0 ? (CSSVAR("--early")||"#4FC3D9") : (CSSVAR("--late")||"#E9A33C"), t);
+}
+
+function setupCanvas(cv, w, h){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(w*dpr);
+  cv.height = Math.round(h*dpr);
+  cv.style.width = w + "px";
+  cv.style.height = h + "px";
+  const c = cv.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, w, h);
+  return c;
+}
+
+function renderAll(){
+  renderStats();
+  renderLanes();
+  renderDeviation();
+  renderHistogram();
+}
+
+function stats(devsMs){
+  const n = devsMs.length;
+  if (!n) return null;
+  const mean = devsMs.reduce((a,b)=>a+b,0)/n;
+  const sd = Math.sqrt(devsMs.reduce((a,b)=>a+(b-mean)*(b-mean),0)/n);
+  const absMean = devsMs.reduce((a,b)=>a+Math.abs(b),0)/n;
+  const max = devsMs.reduce((a,b)=>Math.abs(b)>Math.abs(a)?b:a, 0);
+  const within = devsMs.filter(d=>Math.abs(d)<=15).length;
+  return { n, mean, sd, absMean, max, within };
+}
+
+function renderStats(){
+  const { grid, clusters, byBand } = lastAnalysis;
+  const count = byBand.all.length;
+  els("rCount").textContent = count + " 打";
+
+  if (grid && grid.devs.length){
+    const ms = grid.devs.map(d => d.dev*1000);
+    const s = stats(ms);
+    els("hVal").innerHTML = s.sd.toFixed(1) + '<span class="u">ms</span>';
+    els("hSub").textContent = "平均のズレ幅 " + s.absMean.toFixed(1) + "ms";
+    els("rBpm").textContent = Math.round(grid.bpm) + " BPM  /  " + (SUB_NAME[grid.sub]||"") +
+      (settings.mode === "auto" ? "（推定）" : "");
+    const bias = s.mean;
+    els("rBias").textContent = (Math.abs(bias) < 1.5 ? "ほぼ中央" :
+      (bias < 0 ? "走り " : "もたり ") + Math.abs(bias).toFixed(1) + " ms");
+    els("rMax").textContent = (s.max<0?"走り ":"もたり ") + Math.abs(s.max).toFixed(0) + " ms";
+    els("rIn").textContent = s.within + " / " + s.n + "  (" + Math.round(s.within/s.n*100) + "%)";
+
+    const warn = els("gridWarn");
+    if (settings.mode === "auto" && grid.confidence < 0.72){
+      warn.textContent = "一定のテンポに乗っていないため、グリッドがうまく合っていません。テンポが途中で動いたか、演奏がかなり不規則です。狙ったテンポが決まっているなら、下の設定で BPM を直接指定してください。";
+      warn.classList.remove("hidden");
+    } else {
+      warn.classList.add("hidden");
+    }
+  } else {
+    els("hVal").innerHTML = '–<span class="u">ms</span>';
+    els("hSub").textContent = count < 4 ? "打点が足りません" : "グリッドを決められません";
+    els("rBpm").textContent = "–";
+    els("rBias").textContent = "–";
+    els("rMax").textContent = "–";
+    els("rIn").textContent = "–";
+    els("gridWarn").classList.add("hidden");
+  }
+
+  if (clusters.length){
+    const sp = clusters.map(c => c.spread*1000);
+    const mean = sp.reduce((a,b)=>a+b,0)/sp.length;
+    els("vVal").innerHTML = mean.toFixed(1) + '<span class="u">ms</span>';
+    els("vSub").textContent = clusters.length + " 箇所 / 最大 " + Math.max(...sp).toFixed(0) + "ms";
+  } else {
+    els("vVal").innerHTML = '–<span class="u">ms</span>';
+    els("vSub").textContent = "同時打点が見つかりません";
+  }
+}
+
+function renderLanes(){
+  const { byBand, grid, clusters, dur } = lastAnalysis;
+  const pps = settings.zoom;
+  const padL = 92, padR = 20, padT = 14, padB = 24;
+  const w = Math.max(document.querySelector(".wrap").clientWidth - 36, padL + dur*pps + padR);
+  const laneH = 46;
+  const lanes = ["low","mid","high"];
+  const h = padT + lanes.length*laneH + padB;
+
+  const cv = els("laneCv");
+  const c = setupCanvas(cv, w, h);
+  const x = t => padL + t*pps;
+
+  c.fillStyle = CSSVAR("--panel"); c.fillRect(0,0,w,h);
+
+  // grid lines
+  if (grid){
+    const P = grid.period, ph = grid.phase, sub = grid.sub || 1;
+    const k0 = Math.floor((0 - ph)/P), k1 = Math.ceil((dur - ph)/P);
+    for (let k=k0; k<=k1; k++){
+      const t = ph + k*P;
+      if (t < -0.01 || t > dur) continue;
+      const beat = ((k % sub) + sub) % sub === 0;
+      c.strokeStyle = beat ? CSSVAR("--line") : CSSVAR("--line-soft");
+      c.lineWidth = beat ? 1.4 : 1;
+      c.beginPath(); c.moveTo(x(t)+0.5, padT); c.lineTo(x(t)+0.5, padT + lanes.length*laneH); c.stroke();
+    }
+  }
+
+  // lane rows
+  c.textBaseline = "middle";
+  lanes.forEach((key, i) => {
+    const cy = padT + i*laneH + laneH/2;
+    c.strokeStyle = CSSVAR("--line-soft"); c.lineWidth = 1;
+    c.beginPath(); c.moveTo(padL, padT + (i+1)*laneH + 0.5); c.lineTo(w-padR, padT + (i+1)*laneH + 0.5); c.stroke();
+
+    c.fillStyle = CSSVAR("--dim");
+    c.font = '11px ' + CSSVAR("--ja");
+    const parts = BANDS.find(b=>b.key===key).label.split("  ");
+    c.fillText(parts[0], 8, cy - 7);
+    c.fillStyle = CSSVAR("--faint");
+    c.font = '10px ' + CSSVAR("--num");
+    c.fillText(parts[1] || "", 8, cy + 8);
+  });
+
+  // vertical clusters
+  clusters.forEach(cl => {
+    const idx = cl.members.map(m => lanes.indexOf(m.band)).filter(i=>i>=0);
+    if (!idx.length) return;
+    const y1 = padT + Math.min(...idx)*laneH + laneH/2;
+    const y2 = padT + Math.max(...idx)*laneH + laneH/2;
+    const mid = (cl.start + cl.end)/2;
+    const bad = cl.spread*1000 > 12;
+    c.strokeStyle = bad ? CSSVAR("--bad") : CSSVAR("--faint");
+    c.lineWidth = bad ? 1.4 : 1;
+    c.beginPath(); c.moveTo(x(mid), y1); c.lineTo(x(mid), y2); c.stroke();
+  });
+
+  // onset dots
+  const devAt = new Map();
+  if (grid) grid.devs.forEach(d => devAt.set(Math.round(d.t*1000), d.dev*1000));
+  const nearestDev = t => {
+    const key = Math.round(t*1000);
+    for (let o=0; o<=30; o++){
+      if (devAt.has(key+o)) return devAt.get(key+o);
+      if (devAt.has(key-o)) return devAt.get(key-o);
+    }
+    return null;
+  };
+
+  lanes.forEach((key, i) => {
+    const cy = padT + i*laneH + laneH/2;
+    (byBand[key]||[]).forEach(o => {
+      const d = nearestDev(o.t);
+      const r = 3 + Math.min(3, o.strength*4);
+      c.fillStyle = d === null ? CSSVAR("--faint") : devColor(d);
+      c.beginPath(); c.arc(x(o.t), cy, r, 0, Math.PI*2); c.fill();
+    });
+  });
+
+  // time ruler
+  c.fillStyle = CSSVAR("--faint");
+  c.font = '10px ' + CSSVAR("--num");
+  c.textBaseline = "top";
+  const step = pps > 150 ? 0.5 : (pps > 80 ? 1 : 2);
+  for (let t=0; t<=dur; t+=step){
+    c.fillText(t.toFixed(step<1?1:0) + "s", x(t) - 6, h - padB + 6);
+  }
+}
+
+function renderDeviation(){
+  const { grid, dur } = lastAnalysis;
+  const w = document.querySelector(".wrap").clientWidth - 36;
+  const h = 190;
+  const cv = els("devCv");
+  const c = setupCanvas(cv, w, h);
+  c.fillStyle = CSSVAR("--panel"); c.fillRect(0,0,w,h);
+
+  if (!grid || !grid.devs.length){
+    c.fillStyle = CSSVAR("--faint"); c.font = '13px ' + CSSVAR("--ja");
+    c.textAlign = "center"; c.fillText("グリッドが決まっていません", w/2, h/2);
+    c.textAlign = "left";
+    return;
+  }
+
+  const ms = grid.devs.map(d => d.dev*1000);
+  const lim = Math.max(30, Math.ceil(Math.max(...ms.map(Math.abs))/10)*10);
+  const padL = 38, padR = 10, padT = 12, padB = 20;
+  const y = v => padT + (lim - v)/(2*lim)*(h - padT - padB);
+  const x = t => padL + (t/dur)*(w - padL - padR);
+
+  // ±15ms band
+  c.fillStyle = "rgba(255,255,255,.045)";
+  c.fillRect(padL, y(15), w-padL-padR, y(-15)-y(15));
+
+  c.strokeStyle = CSSVAR("--line"); c.lineWidth = 1;
+  c.beginPath(); c.moveTo(padL, y(0)+0.5); c.lineTo(w-padR, y(0)+0.5); c.stroke();
+
+  c.fillStyle = CSSVAR("--faint");
+  c.font = '10px ' + CSSVAR("--num");
+  c.textBaseline = "middle";
+  [lim, 0, -lim].forEach(v => {
+    c.fillText((v>0?"+":"") + v, 4, y(v));
+    if (v !== 0){
+      c.strokeStyle = CSSVAR("--line-soft");
+      c.beginPath(); c.moveTo(padL, y(v)+0.5); c.lineTo(w-padR, y(v)+0.5); c.stroke();
+    }
+  });
+
+  // stems + dots
+  grid.devs.forEach(d => {
+    const v = d.dev*1000, px = x(d.t), py = y(v);
+    c.strokeStyle = "rgba(255,255,255,.10)";
+    c.beginPath(); c.moveTo(px, y(0)); c.lineTo(px, py); c.stroke();
+    c.fillStyle = devColor(v);
+    c.beginPath(); c.arc(px, py, 3.2, 0, Math.PI*2); c.fill();
+  });
+}
+
+function renderHistogram(){
+  const { grid } = lastAnalysis;
+  const w = document.querySelector(".wrap").clientWidth - 36;
+  const h = 150;
+  const cv = els("hisCv");
+  const c = setupCanvas(cv, w, h);
+  c.fillStyle = CSSVAR("--panel"); c.fillRect(0,0,w,h);
+
+  if (!grid || !grid.devs.length){
+    c.fillStyle = CSSVAR("--faint"); c.font = '13px ' + CSSVAR("--ja");
+    c.textAlign = "center"; c.fillText("グリッドが決まっていません", w/2, h/2);
+    c.textAlign = "left";
+    return;
+  }
+
+  const ms = grid.devs.map(d => d.dev*1000);
+  const LIM = 60, BIN = 5, NB = (LIM*2)/BIN;
+  const bins = new Array(NB).fill(0);
+  ms.forEach(v => {
+    let i = Math.floor((Math.max(-LIM, Math.min(LIM-0.001, v)) + LIM)/BIN);
+    bins[Math.max(0, Math.min(NB-1, i))]++;
+  });
+  const mx = Math.max(...bins, 1);
+  const padT = 10, padB = 22, padX = 10;
+  const bw = (w - padX*2)/NB;
+
+  bins.forEach((n, i) => {
+    const v = -LIM + i*BIN + BIN/2;
+    const bh = (n/mx)*(h - padT - padB);
+    c.fillStyle = n ? devColor(v) : "transparent";
+    c.fillRect(padX + i*bw + 0.5, h - padB - bh, bw - 1, bh);
+  });
+
+  c.strokeStyle = CSSVAR("--line");
+  c.beginPath(); c.moveTo(padX, h-padB+0.5); c.lineTo(w-padX, h-padB+0.5); c.stroke();
+  c.strokeStyle = CSSVAR("--dim");
+  const cx = padX + (NB/2)*bw;
+  c.beginPath(); c.moveTo(cx+0.5, padT); c.lineTo(cx+0.5, h-padB); c.stroke();
+
+  c.fillStyle = CSSVAR("--faint");
+  c.font = '10px ' + CSSVAR("--num");
+  c.textBaseline = "top";
+  [[-60,"-60"],[-30,"-30"],[0,"0"],[30,"+30"],[60,"+60"]].forEach(([v,l]) => {
+    const px = padX + ((v+LIM)/BIN)*bw;
+    c.fillText(l, px - 8, h - padB + 5);
+  });
+}
+
+/* ============================================================
+   Controls
+   ============================================================ */
+function bindSlider(id, valId, fmt, apply){
+  const el = els(id), out = els(valId);
+  const update = () => { out.textContent = fmt(el.value); };
+  el.addEventListener("input", () => { update(); apply(el.value); });
+  update();
+}
+
+bindSlider("sens", "sensV", v => v, v => { settings.sens = +v; reanalyse(); });
+bindSlider("gap", "gapV", v => v + " ms", v => { settings.gap = +v/1000; reanalyse(); });
+bindSlider("gate", "gateV", v => v + " %", v => { settings.gate = +v/100; reanalyse(); });
+bindSlider("zoom", "zoomV", v => v + " px/秒", v => { settings.zoom = +v; if (lastAnalysis) renderLanes(); });
+
+function bindSeg(id, apply){
+  const box = els(id);
+  box.addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    [...box.querySelectorAll("button")].forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    apply(b.dataset.v);
+  });
+}
+bindSeg("gridMode", v => {
+  settings.mode = v;
+  els("manualRow").classList.toggle("hidden", v !== "manual");
+  reanalyse();
+});
+bindSeg("subDiv", v => { settings.sub = +v; reanalyse(); });
+els("bpm").addEventListener("input", e => {
+  const v = +e.target.value;
+  if (v >= 30 && v <= 300){ settings.bpm = v; reanalyse(); }
+});
+
+let rt = null;
+window.addEventListener("resize", () => {
+  clearTimeout(rt);
+  rt = setTimeout(() => { if (lastAnalysis) renderAll(); }, 150);
+});
+
+
+/* ============================================================
+   Demo: synthesise a take instead of recording one
+   ============================================================ */
+const DSR = 48000;
+function gauss(){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+function sKick(b,t){ const s=Math.round(t*DSR);
+  for(let i=0;i<DSR*0.35;i++){ const x=i/DSR, f=110*Math.exp(-x*38)+48;
+    if(s+i<b.length) b[s+i]+=0.85*Math.exp(-x/0.10)*Math.sin(2*Math.PI*f*x); } }
+function sSnare(b,t){ const s=Math.round(t*DSR);
+  for(let i=0;i<DSR*0.25;i++){ const x=i/DSR;
+    if(s+i<b.length) b[s+i]+=0.45*Math.exp(-x/0.075)*((Math.random()*2-1)*0.8+0.5*Math.sin(2*Math.PI*190*x)); } }
+function sHat(b,t,a){ const s=Math.round(t*DSR); let p=0;
+  for(let i=0;i<DSR*0.09;i++){ const x=i/DSR, n=Math.random()*2-1, hp=n-p; p=n;
+    if(s+i<b.length) b[s+i]+=a*0.28*Math.exp(-x/0.022)*hp; } }
+
+const SAMPLES = {
+  tight: { jitter:0.005, drift:0,    label:"揃った演奏" },
+  loose: { jitter:0.022, drift:0,    label:"ヨレた演奏" },
+  drift: { jitter:0.006, drift:0.06, label:"だんだん走る演奏" }
+};
+
+function synth(kind){
+  const { jitter, drift } = SAMPLES[kind];
+  const P = 0.3, N = 64, O = 0.4;
+  const hits = [];
+  let t = O;
+  for (let k=0;k<N;k++){
+    hits.push({ k, t: t + gauss()*jitter });
+    t += P*(1 - drift*k/N);
+  }
+  const buf = new Float32Array(Math.round((hits[N-1].t + 1.2)*DSR));
+  hits.forEach(({k,t}) => {
+    sHat(buf, t, k%2 ? 0.75 : 1);
+    const m = k%8;
+    if (m===0 || m===4) sKick(buf, t);
+    if (m===2 || m===6) sSnare(buf, t);
+  });
+  for (let i=0;i<buf.length;i++) buf[i] += (Math.random()*2-1)*0.004;   // room tone
+  let pk = 0;
+  for (let i=0;i<buf.length;i++) pk = Math.max(pk, Math.abs(buf[i]));
+  for (let i=0;i<buf.length;i++) buf[i] = buf[i]/pk*0.7;
+  return buf;
+}
+
+const demoNote = els("demoNote");
+const demoBtns = [...document.querySelectorAll(".demo button")];
+
+demoBtns.forEach(btn => btn.addEventListener("click", () => {
+  const kind = btn.dataset.s;
+  demoBtns.forEach(b => b.disabled = true);
+  demoNote.textContent = SAMPLES[kind].label + " を合成しています…";
+
+  setTimeout(() => {
+    const pcm = synth(kind);
+    demoNote.textContent = "解析しています…";
+    setTimeout(() => {
+      try {
+        recorded = { pcm, sr: DSR };
+        fluxCache = computeFlux(pcm, DSR);
+        reanalyse();
+        preparePlayback(pcm, DSR);
+        results.classList.remove("hidden");
+        emptyState.classList.add("hidden");
+        demoNote.textContent = SAMPLES[kind].label + " ・ " + (pcm.length/DSR).toFixed(1) + "秒を解析しました";
+        results.scrollIntoView({ behavior:"smooth", block:"start" });
+      } catch (e){
+        console.error(e);
+        demoNote.textContent = "解析に失敗しました: " + e.message;
+      }
+      demoBtns.forEach(b => b.disabled = false);
+    }, 40);
+  }, 20);
+}));
+
+if (false){
+  setStatus("このブラウザは録音に対応していません。Safari か Chrome で開いてください。", true);
+  recBtn.disabled = true;
+} else if (!window.isSecureContext){
+  setStatus("https:// で開いてください。ファイルを直接開くとマイクが使えません。", true);
+  recBtn.disabled = true;
+}
+</script>
+</body>
+</html>
