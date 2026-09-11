@@ -84,7 +84,12 @@
   .row span:last-child{font-family:var(--num);font-variant-numeric:tabular-nums}
 
   /* ---- canvases ---- */
-  .scroller{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;border:1px solid var(--line-soft);background:var(--panel)}
+  .laneWrap{display:flex;border:1px solid var(--line-soft);background:var(--panel)}
+  .laneKeys{flex:0 0 78px;border-right:1px solid var(--line);background:var(--raised)}
+  .laneKeys div{display:flex;flex-direction:column;justify-content:center;padding-left:10px;box-sizing:border-box}
+  .laneKeys b{font-size:12px;font-weight:600;color:var(--text);line-height:1.3}
+  .laneKeys small{font-family:var(--num);font-size:9.5px;color:var(--faint);line-height:1.3}
+  .scroller{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;background:var(--panel)}
   canvas{display:block}
   .cap{color:var(--faint);font-size:12px;margin-top:8px;line-height:1.6}
   .warn{font-size:12.5px;line-height:1.7;color:var(--late);margin:12px 0 0;padding-left:12px;border-left:2px solid var(--late)}
@@ -170,12 +175,21 @@
 
   <section>
     <h2>打点と グリッド</h2>
-    <div class="scroller" id="laneScroll"><canvas id="laneCv"></canvas></div>
-    <div class="ctl" style="margin-top:12px">
-      <label for="zoom">表示の拡大 <b id="zoomV">120 px/秒</b></label>
-      <input type="range" id="zoom" min="40" max="400" step="10" value="120">
+    <div class="laneWrap">
+      <div class="laneKeys" id="laneKeys"></div>
+      <div class="scroller" id="laneScroll"><canvas id="laneCv"></canvas></div>
     </div>
-    <p class="cap">縦の細い線がグリッド、太い線が拍アタマ。点が打点で、左にズレる（走り）ほど青、右にズレる（もたり）ほど橙になります。帯をまたぐ縦の連結線は、同時に叩いた音のかたまりです。</p>
+    <div class="ctl" style="margin-top:14px">
+      <label for="mag">ズレの拡大 <b id="magV">1 ms = 1.0 px</b></label>
+      <input type="range" id="mag" min="2" max="30" step="1" value="10">
+    </div>
+    <div class="ctl">
+      <label for="zoom">列の幅 <b id="zoomV">84 px</b></label>
+      <input type="range" id="zoom" min="40" max="200" step="4" value="84">
+    </div>
+    <p class="cap"><b style="color:var(--text)">横が等間隔か</b> — 縦線がグリッドです。丸が線の上に乗っていれば正確、右にずれていれば もたり、左なら 走り。灰色の帯が ±15ms の範囲です。<br><br>
+    <b style="color:var(--text)">縦が揃っているか</b> — 同時に叩いた音は連結線で結んであります。<b style="color:var(--text)">線がまっすぐ立っていれば揃っている</b>、傾いていればその分ズレています。<br><br>
+    横軸は時間ではなく<b style="color:var(--text)">グリッドの列</b>です。列の幅は一定なので、ズレはすべて「線からの左右の距離」として出ます。初期設定では 1ミリ秒 = 1ピクセルです。</p>
   </section>
 
   <section>
@@ -783,7 +797,7 @@ els("dlBtn").addEventListener("click", () => {
 /* ============================================================
    Analysis pipeline (cheap to re-run — flux is cached)
    ============================================================ */
-let settings = { sens:7, gap:0.045, gate:0.12, mode:"auto", bpm:100, sub:2, zoom:120 };
+let settings = { sens:7, gap:0.045, gate:0.12, mag:1.0, mode:"auto", bpm:100, sub:2, zoom:84 };
 
 function reanalyse(){
   if (!fluxCache || !recorded) return;
@@ -932,93 +946,139 @@ function renderStats(){
   }
 }
 
+const LANES = [
+  { key:"high", name:"ハイハット",   hz:"5k–15kHz" },
+  { key:"mid",  name:"スネア / タム", hz:"180–1.8k" },
+  { key:"low",  name:"バス",         hz:"30–150Hz" }
+];
+
 function renderLanes(){
   const { byBand, grid, clusters, dur } = lastAnalysis;
-  const pps = settings.zoom;
-  const padL = 92, padR = 20, padT = 14, padB = 24;
-  const w = Math.max(document.querySelector(".wrap").clientWidth - 36, padL + dur*pps + padR);
-  const laneH = 46;
-  const lanes = ["low","mid","high"];
-  const h = padT + lanes.length*laneH + padB;
+  const stepPx = settings.zoom;        // width of one grid column
+  const pxMs   = settings.mag;         // how many pixels one millisecond of error is worth
+  const laneH = 58, padT = 14, padB = 28, padL = 16, padR = 40;
+  const h = padT + LANES.length*laneH + padB;
 
-  const cv = els("laneCv");
-  const c = setupCanvas(cv, w, h);
-  const x = t => padL + t*pps;
+  // lane names sit outside the canvas so they stay put while it scrolls
+  const keys = els("laneKeys");
+  keys.innerHTML = "";
+  const addKey = (ht, html) => {
+    const d = document.createElement("div");
+    d.style.height = ht + "px";
+    if (html) d.innerHTML = html;
+    keys.appendChild(d);
+  };
+  addKey(padT, "");
+  LANES.forEach(L => addKey(laneH, "<b>" + L.name + "</b><small>" + L.hz + "</small>"));
+  addKey(padB, "");
 
-  c.fillStyle = CSSVAR("--panel"); c.fillRect(0,0,w,h);
+  const cy = i => padT + i*laneH + laneH/2;
+  const top = padT, bot = padT + LANES.length*laneH;
 
-  // grid lines
+  /* ---- collect the hits, positioned by grid column + magnified error ---- */
+  let dots = [], kMin = 0, kMax = 0, colX;
+
   if (grid){
-    const P = grid.period, ph = grid.phase, sub = grid.sub || 1;
-    const k0 = Math.floor((0 - ph)/P), k1 = Math.ceil((dur - ph)/P);
-    for (let k=k0; k<=k1; k++){
-      const t = ph + k*P;
-      if (t < -0.01 || t > dur) continue;
+    const P = grid.period, ph = grid.phase;
+    const stepOf = t => Math.round((t - ph)/P);
+    const ks = [];
+    LANES.forEach((L, i) => (byBand[L.key] || []).forEach(o => {
+      const k = stepOf(o.t);
+      ks.push(k);
+      dots.push({ lane:i, k, dev:(o.t - (ph + k*P))*1000, s:o.strength, t:o.t });
+    }));
+    if (!ks.length) ks.push(0);
+    kMin = Math.min(...ks); kMax = Math.max(...ks);
+    colX = k => padL + (k - kMin)*stepPx;
+    dots.forEach(d => { d.x = colX(d.k) + d.dev*pxMs; d.y = cy(d.lane); });
+  } else {
+    // no usable grid: fall back to a plain time axis
+    const pps = stepPx/0.5;
+    LANES.forEach((L, i) => (byBand[L.key] || []).forEach(o => {
+      dots.push({ lane:i, k:null, dev:0, s:o.strength, t:o.t, x:padL + o.t*pps, y:cy(i) });
+    }));
+  }
+
+  const wNeeded = grid ? padL + (kMax - kMin + 1)*stepPx + padR : padL + dur*(stepPx/0.5) + padR;
+  const w = Math.max(els("laneScroll").clientWidth || 400, wNeeded);
+  const c = setupCanvas(els("laneCv"), w, h);
+  c.fillStyle = CSSVAR("--panel"); c.fillRect(0, 0, w, h);
+
+  /* ---- grid columns ---- */
+  if (grid){
+    const sub = grid.sub || 1, perBar = sub*4;
+    const tol = 15*pxMs;                       // the ±15 ms window, in pixels
+    for (let k=kMin; k<=kMax; k++){
+      c.fillStyle = "rgba(255,255,255,.05)";
+      c.fillRect(colX(k) - tol, top, tol*2, bot - top);
+    }
+    c.textBaseline = "top";
+    for (let k=kMin; k<=kMax; k++){
+      const x = colX(k);
+      const bar = ((k % perBar) + perBar) % perBar === 0;
       const beat = ((k % sub) + sub) % sub === 0;
-      c.strokeStyle = beat ? CSSVAR("--line") : CSSVAR("--line-soft");
-      c.lineWidth = beat ? 1.4 : 1;
-      c.beginPath(); c.moveTo(x(t)+0.5, padT); c.lineTo(x(t)+0.5, padT + lanes.length*laneH); c.stroke();
+      c.strokeStyle = bar ? CSSVAR("--dim") : (beat ? CSSVAR("--line") : CSSVAR("--line-soft"));
+      c.lineWidth = bar ? 1.6 : 1;
+      c.beginPath(); c.moveTo(x + 0.5, top); c.lineTo(x + 0.5, bot); c.stroke();
+      if (bar){
+        c.fillStyle = CSSVAR("--faint");
+        c.font = "10px " + CSSVAR("--num");
+        c.fillText(String(Math.round(k/perBar) + 1) + "小節", x + 4, bot + 8);
+      }
     }
   }
 
-  // lane rows
-  c.textBaseline = "middle";
-  lanes.forEach((key, i) => {
-    const cy = padT + i*laneH + laneH/2;
-    c.strokeStyle = CSSVAR("--line-soft"); c.lineWidth = 1;
-    c.beginPath(); c.moveTo(padL, padT + (i+1)*laneH + 0.5); c.lineTo(w-padR, padT + (i+1)*laneH + 0.5); c.stroke();
-
-    c.fillStyle = CSSVAR("--dim");
-    c.font = '11px ' + CSSVAR("--ja");
-    const parts = BANDS.find(b=>b.key===key).label.split("  ");
-    c.fillText(parts[0], 8, cy - 7);
-    c.fillStyle = CSSVAR("--faint");
-    c.font = '10px ' + CSSVAR("--num");
-    c.fillText(parts[1] || "", 8, cy + 8);
+  /* ---- one rail per lane ---- */
+  LANES.forEach((L, i) => {
+    c.strokeStyle = CSSVAR("--line");
+    c.lineWidth = 1;
+    c.beginPath(); c.moveTo(padL - 8, cy(i) + 0.5); c.lineTo(w - 4, cy(i) + 0.5); c.stroke();
   });
 
-  // vertical clusters
-  clusters.forEach(cl => {
-    const idx = cl.members.map(m => lanes.indexOf(m.band)).filter(i=>i>=0);
-    if (!idx.length) return;
-    const y1 = padT + Math.min(...idx)*laneH + laneH/2;
-    const y2 = padT + Math.max(...idx)*laneH + laneH/2;
-    const mid = (cl.start + cl.end)/2;
-    const bad = cl.spread*1000 > 12;
-    c.strokeStyle = bad ? CSSVAR("--bad") : CSSVAR("--faint");
-    c.lineWidth = bad ? 1.4 : 1;
-    c.beginPath(); c.moveTo(x(mid), y1); c.lineTo(x(mid), y2); c.stroke();
-  });
-
-  // onset dots
-  const devAt = new Map();
-  if (grid) grid.devs.forEach(d => devAt.set(Math.round(d.t*1000), d.dev*1000));
-  const nearestDev = t => {
-    const key = Math.round(t*1000);
-    for (let o=0; o<=30; o++){
-      if (devAt.has(key+o)) return devAt.get(key+o);
-      if (devAt.has(key-o)) return devAt.get(key-o);
-    }
-    return null;
-  };
-
-  lanes.forEach((key, i) => {
-    const cy = padT + i*laneH + laneH/2;
-    (byBand[key]||[]).forEach(o => {
-      const d = nearestDev(o.t);
-      const r = 3 + Math.min(3, o.strength*4);
-      c.fillStyle = d === null ? CSSVAR("--faint") : devColor(d);
-      c.beginPath(); c.arc(x(o.t), cy, r, 0, Math.PI*2); c.fill();
+  /* ---- connect hits that belong together ----
+     upright line = they landed together, leaning line = they didn't ---- */
+  const groups = new Map();
+  if (grid){
+    dots.forEach(d => { const g = groups.get(d.k) || []; g.push(d); groups.set(d.k, g); });
+  } else {
+    clusters.forEach((cl, gi) => {
+      const g = dots.filter(d => d.t >= cl.start - 1e-6 && d.t <= cl.end + 1e-6);
+      if (g.length) groups.set("c" + gi, g);
     });
+  }
+  groups.forEach(g => {
+    if (new Set(g.map(d => d.lane)).size < 2) return;
+    const sorted = g.slice().sort((a, b) => a.lane - b.lane);
+    const ms = (Math.max(...g.map(d => d.t)) - Math.min(...g.map(d => d.t)))*1000;
+    const off = ms > 12;
+    c.strokeStyle = off ? CSSVAR("--bad") : "rgba(255,255,255,.34)";
+    c.lineWidth = off ? 2.2 : 1.5;
+    c.beginPath();
+    sorted.forEach((d, i) => i ? c.lineTo(d.x, d.y) : c.moveTo(d.x, d.y));
+    c.stroke();
+    if (off){
+      const lowest = sorted[sorted.length-1];
+      c.fillStyle = CSSVAR("--bad");
+      c.font = "10px " + CSSVAR("--num");
+      c.textBaseline = "top";
+      c.fillText(Math.round(ms) + "ms", lowest.x + 7, lowest.y + 4);
+    }
   });
 
-  // time ruler
-  c.fillStyle = CSSVAR("--faint");
-  c.font = '10px ' + CSSVAR("--num");
-  c.textBaseline = "top";
-  const step = pps > 150 ? 0.5 : (pps > 80 ? 1 : 2);
-  for (let t=0; t<=dur; t+=step){
-    c.fillText(t.toFixed(step<1?1:0) + "s", x(t) - 6, h - padB + 6);
+  /* ---- the dots ---- */
+  dots.forEach(d => {
+    const r = 4 + Math.min(2.6, d.s*3);
+    c.fillStyle = grid ? devColor(d.dev) : CSSVAR("--neutral");
+    c.beginPath(); c.arc(d.x, d.y, r, 0, Math.PI*2); c.fill();
+    c.strokeStyle = CSSVAR("--panel"); c.lineWidth = 1.4; c.stroke();
+  });
+
+  if (!grid){
+    const pps = stepPx/0.5;
+    c.fillStyle = CSSVAR("--faint");
+    c.font = "10px " + CSSVAR("--num");
+    c.textBaseline = "top";
+    for (let t=0; t<=dur; t++) c.fillText(t + "s", padL + t*pps - 6, bot + 8);
   }
 }
 
@@ -1132,7 +1192,9 @@ function bindSlider(id, valId, fmt, apply){
 bindSlider("sens", "sensV", v => v, v => { settings.sens = +v; reanalyse(); });
 bindSlider("gap", "gapV", v => v + " ms", v => { settings.gap = +v/1000; reanalyse(); });
 bindSlider("gate", "gateV", v => v + " %", v => { settings.gate = +v/100; reanalyse(); });
-bindSlider("zoom", "zoomV", v => v + " px/秒", v => { settings.zoom = +v; if (lastAnalysis) renderLanes(); });
+bindSlider("mag", "magV", v => "1 ms = " + (+v/10).toFixed(1) + " px",
+  v => { settings.mag = +v/10; if (lastAnalysis) renderLanes(); });
+bindSlider("zoom", "zoomV", v => v + " px", v => { settings.zoom = +v; if (lastAnalysis) renderLanes(); });
 
 function bindSeg(id, apply){
   const box = els(id);
