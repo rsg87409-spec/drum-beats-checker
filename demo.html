@@ -84,6 +84,12 @@
   .row span:last-child{font-family:var(--num);font-variant-numeric:tabular-nums}
 
   /* ---- canvases ---- */
+  .legend{margin-top:12px;padding:12px 14px;background:var(--panel);border:1px solid var(--line-soft)}
+  .legend .swrow{display:flex;gap:5px;align-items:center}
+  .legend .swrow i{flex:1;height:14px;border-radius:7px;display:block}
+  .legend .swlabels{display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--faint)}
+  .legend .swlabels span:nth-child(2){color:var(--dim)}
+  .legend p{margin:10px 0 0;font-size:12.5px;line-height:1.75;color:var(--dim)}
   .pager{display:flex;align-items:center;gap:12px;margin-bottom:10px}
   .pager button{
     background:var(--panel);border:1px solid var(--line);color:var(--text);font:inherit;
@@ -239,6 +245,11 @@
     <div class="ctl">
       <label for="zoom">列の幅 <b id="zoomV">84 px</b></label>
       <input type="range" id="zoom" min="40" max="200" step="4" value="84">
+    </div>
+    <div class="legend">
+      <div class="swrow" id="legendRow"></div>
+      <div class="swlabels"><span>走り（早い）</span><span>ジャスト</span><span>もたり（遅い）</span></div>
+      <p>丸の色はグリッドからのズレです。白に近いほど正確、青くなるほど早く、橙色になるほど遅く叩いています。連結線が赤いのは、同時に叩いた音が 12ms 以上ばらけたところです。</p>
     </div>
     <p class="cap"><b style="color:var(--text)">横が等間隔か</b> — 縦線がグリッドです。丸が線の上に乗っていれば正確、右にずれていれば もたり、左なら 走り。灰色の帯が ±15ms の範囲です。<br><br>
     <b style="color:var(--text)">縦が揃っているか</b> — 同時に叩いた音は連結線で結んであります。<b style="color:var(--text)">線がまっすぐ立っていれば揃っている</b>、傾いていればその分ズレています。<br><br>
@@ -1007,7 +1018,20 @@ function setupCanvas(cv, w, h){
   return c;
 }
 
+function renderLegend(){
+  const row = els("legendRow");
+  if (row.dataset.done) return;
+  row.dataset.done = "1";
+  [-45, -30, -18, -9, 0, 9, 18, 30, 45].forEach(v => {
+    const i = document.createElement("i");
+    i.style.background = devColor(v);
+    i.title = (v > 0 ? "+" : "") + v + " ms";
+    row.appendChild(i);
+  });
+}
+
 function renderAll(){
+  renderLegend();
   renderStats();
   renderLanes();
   renderDeviation();
@@ -1105,7 +1129,7 @@ function renderLanes(){
   // are shown a page at a time rather than as one very wide strip.
   const MAX_W = 3200;
   const inner = MAX_W - padL - padR;
-  let dots = [], kMin = 0, kMax = 0, colX, pages = 1, kStart = 0, kEnd = 0;
+  let dots = [], kMin = 0, kMax = 0, kBase = 0, colX, pages = 1, kStart = 0, kEnd = 0;
 
   if (grid){
     const P = grid.period, ph = grid.phase;
@@ -1121,13 +1145,15 @@ function renderLanes(){
     if (!ks.length) ks.push(0);
     kMin = Math.min(...ks); kMax = Math.max(...ks);
 
-    // page in whole bars so the columns always start at a downbeat
+    // whole bars only: snap the first column back to the downbeat of its bar,
+    // then hand out a fixed number of complete bars per page
+    kBase = Math.floor(kMin/perBar)*perBar;
     const barsFit = Math.max(1, Math.floor(inner/stepPx/perBar));
     const stepsPerPage = barsFit*perBar;
-    pages = Math.max(1, Math.ceil((kMax - kMin + 1)/stepsPerPage));
+    pages = Math.max(1, Math.ceil((kMax - kBase + 1)/stepsPerPage));
     settings.page = Math.max(0, Math.min(pages - 1, settings.page|0));
-    kStart = kMin + settings.page*stepsPerPage;
-    kEnd = Math.min(kMax, kStart + stepsPerPage - 1);
+    kStart = kBase + settings.page*stepsPerPage;
+    kEnd = kStart + stepsPerPage - 1;          // always ends on a barline
 
     colX = k => padL + (k - kStart)*stepPx;
     dots = all.filter(d => d.k >= kStart && d.k <= kEnd);
@@ -1152,9 +1178,9 @@ function renderLanes(){
   els("pageNext").disabled = settings.page >= pages - 1;
   if (grid){
     const perBar = (grid.sub || 1)*4;
-    const b0 = Math.floor((kStart - kMin)/perBar) + 1;
-    const b1 = Math.floor((kEnd - kMin)/perBar) + 1;
-    const bTotal = Math.floor((kMax - kMin)/perBar) + 1;
+    const b0 = Math.floor((kStart - kBase)/perBar) + 1;
+    const b1 = Math.floor((kEnd - kBase)/perBar) + 1;
+    const bTotal = Math.floor((kMax - kBase)/perBar) + 1;
     els("pageLabel").textContent = b0 + "–" + b1 + " 小節 / 全 " + bTotal + " 小節";
   } else {
     els("pageLabel").textContent = kStart.toFixed(0) + "–" + Math.min(dur, kEnd).toFixed(0) + " 秒 / 全 " + dur.toFixed(0) + " 秒";
@@ -1185,7 +1211,7 @@ function renderLanes(){
       if (bar){
         c.fillStyle = CSSVAR("--faint");
         c.font = "10px " + CSSVAR("--num");
-        c.fillText(String(Math.floor((k - kMin)/perBar) + 1) + "小節", x + 4, bot + 8);
+        c.fillText(String(Math.floor((k - kBase)/perBar) + 1) + "小節", x + 4, bot + 8);
       }
     }
   }
@@ -1379,14 +1405,17 @@ els("bpm").addEventListener("input", e => {
   if (v >= 30 && v <= 300){ settings.bpm = v; reanalyse(); }
 });
 
-els("pagePrev").addEventListener("click", () => {
-  settings.page = Math.max(0, settings.page - 1);
-  if (lastAnalysis) renderLanes();
-});
-els("pageNext").addEventListener("click", () => {
-  settings.page = settings.page + 1;
-  if (lastAnalysis) renderLanes();
-});
+// land on the edge the reader is coming from: forward → start of the page,
+// back → the end they were just looking at
+function turnPage(delta){
+  if (!lastAnalysis) return;
+  settings.page += delta;
+  renderLanes();
+  const sc = els("laneScroll");
+  sc.scrollLeft = delta > 0 ? 0 : sc.scrollWidth;
+}
+els("pagePrev").addEventListener("click", () => turnPage(-1));
+els("pageNext").addEventListener("click", () => turnPage(1));
 
 let rt = null;
 window.addEventListener("resize", () => {
